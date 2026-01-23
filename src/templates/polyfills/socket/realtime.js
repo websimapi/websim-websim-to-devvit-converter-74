@@ -23,6 +23,7 @@ export const socketRealtime = `
             // Throttling state
             this._lastUpdateSent = 0;
             this._updatePending = false;
+            this._leaving = false;
             
             // Disconnect Handling
             this._lastSeen = {};
@@ -38,8 +39,11 @@ export const socketRealtime = `
             // This ensures by the time any code accesses the room, init is in progress
             this._initPromise = this.initialize();
 
-            // Setup disconnect handlers
-            window.addEventListener('beforeunload', () => this._sendLeave());
+            // Setup disconnect handlers (pagehide is critical for Mobile/Safari)
+            const cleanup = () => this._sendLeave();
+            window.addEventListener('beforeunload', cleanup);
+            window.addEventListener('pagehide', cleanup);
+            window.addEventListener('unload', cleanup);
             
             // Prune stale peers every 5s
             this._pruneInterval = setInterval(() => this._pruneStalePeers(), 5000);
@@ -270,22 +274,29 @@ export const socketRealtime = `
 
         async _sendLeave() {
             // Best effort leave notification
-            if (this.clientId) {
+            if (this.clientId && !this._leaving) {
+                this._leaving = true;
                 const payload = JSON.stringify({
                     type: '_ws_leave',
                     clientId: this.clientId
                 });
-                if (navigator.sendBeacon) {
-                    const blob = new Blob([payload], { type: 'application/json' });
-                    navigator.sendBeacon('/api/realtime/message', blob);
-                } else {
-                    fetch('/api/realtime/message', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: payload,
-                        keepalive: true
-                    }).catch(() => {});
-                }
+
+                // Try Beacon first (Most reliable for closing pages)
+                try {
+                    if (navigator.sendBeacon) {
+                        const blob = new Blob([payload], { type: 'application/json' });
+                        navigator.sendBeacon('/api/realtime/message', blob);
+                        return;
+                    }
+                } catch(e) { /* ignore beacon errors */ }
+                
+                // Fallback to fetch with keepalive
+                fetch('/api/realtime/message', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: payload,
+                    keepalive: true
+                }).catch(() => {});
             }
         }
 

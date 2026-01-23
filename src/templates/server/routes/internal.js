@@ -8,13 +8,7 @@ const PRESENCE_TTL_MS = 20000; // 20 seconds (Aligns with client-side 15s prune 
 
 router.post('/api/realtime/message', async (req, res) => {
     try {
-        let msg = req.body;
-        
-        // Handle Beacon/Keepalive edge cases (Body might be stringified string if middleware misinterprets blob)
-        if (typeof msg === 'string') {
-            try { msg = JSON.parse(msg); } catch(e) {}
-        }
-        
+        const msg = req.body;
         const type = msg.type;
         
         // 1. Handle presence updates - store in single Hash
@@ -41,7 +35,6 @@ router.post('/api/realtime/message', async (req, res) => {
             const { clientId } = msg;
             if (clientId) {
                 await redis.hDel(PRESENCE_HASH_KEY, [clientId]);
-                // console.log(`[RT] Client left explicitly: ${clientId}`);
             }
         }
         

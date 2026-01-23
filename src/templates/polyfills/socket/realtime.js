@@ -23,7 +23,6 @@ export const socketRealtime = `
             // Throttling state
             this._lastUpdateSent = 0;
             this._updatePending = false;
-            this._leaving = false;
             
             // Disconnect Handling
             this._lastSeen = {};
@@ -39,11 +38,16 @@ export const socketRealtime = `
             // This ensures by the time any code accesses the room, init is in progress
             this._initPromise = this.initialize();
 
-            // Setup disconnect handlers (pagehide is critical for Mobile/Safari)
-            const cleanup = () => this._sendLeave();
-            window.addEventListener('beforeunload', cleanup);
-            window.addEventListener('pagehide', cleanup);
-            window.addEventListener('unload', cleanup);
+            // Setup disconnect handlers
+            this._leaveSent = false;
+            const handleLeave = () => {
+                if (!this._leaveSent) {
+                    this._leaveSent = true;
+                    this._sendLeave();
+                }
+            };
+            window.addEventListener('beforeunload', handleLeave);
+            window.addEventListener('pagehide', handleLeave);
             
             // Prune stale peers every 5s
             this._pruneInterval = setInterval(() => this._pruneStalePeers(), 5000);
@@ -274,29 +278,24 @@ export const socketRealtime = `
 
         async _sendLeave() {
             // Best effort leave notification
-            if (this.clientId && !this._leaving) {
-                this._leaving = true;
+            if (this.clientId) {
                 const payload = JSON.stringify({
                     type: '_ws_leave',
                     clientId: this.clientId
                 });
-
-                // Try Beacon first (Most reliable for closing pages)
-                try {
-                    if (navigator.sendBeacon) {
-                        const blob = new Blob([payload], { type: 'application/json' });
-                        navigator.sendBeacon('/api/realtime/message', blob);
-                        return;
-                    }
-                } catch(e) { /* ignore beacon errors */ }
                 
-                // Fallback to fetch with keepalive
-                fetch('/api/realtime/message', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: payload,
-                    keepalive: true
-                }).catch(() => {});
+                // Prioritize fetch with keepalive (More reliable header handling)
+                if (window.fetch) {
+                    fetch('/api/realtime/message', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: payload,
+                        keepalive: true
+                    }).catch(e => console.warn("[WebSim] Leave signal failed:", e));
+                } else if (navigator.sendBeacon) {
+                    const blob = new Blob([payload], { type: 'application/json' });
+                    navigator.sendBeacon('/api/realtime/message', blob);
+                }
             }
         }
 
